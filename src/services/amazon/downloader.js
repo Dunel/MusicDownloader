@@ -32,6 +32,8 @@ class Downloader {
     this.templateFileMultiDisc = config.templateFileMultiDisc;
     this.templateDate = config.templateDate;
     this.truncate = config.truncate;
+    this.lyricsDonwload = config.lyricsDonwload;
+    this.coverDownload = config.coverDownload || false;
     this.coverSize = config.coverSize;
     this.coverQuality = config.coverQuality;
     this.excludeTags = config.excludeTags;
@@ -132,17 +134,17 @@ class Downloader {
     return { type: urlParts[0], asin: asin[0], country };
   }
 
-  async getByUrl(url /*, progressCallback*/) {
+  async getByUrl(url, progressCallback) {
     const { type, asin, country } = this.getUrlParts(url);
     switch (type) {
       case "tracks":
-        return this.startDownloader(asin, country);
+        return this.singleDownloader(asin, country, progressCallback);
       case "albums":
-        return { type, asin, country };
+        return this.albumDownloader(asin, country, progressCallback);
       case "artists":
-        return { type, asin, country };
+        return this.artistDownloader(asin, country, progressCallback);
       case "playlists":
-        return { type, asin, country };
+        return this.playlistDownloader(asin, country, progressCallback);
       default:
         throw new Error("Invalid URL type");
     }
@@ -268,8 +270,8 @@ class Downloader {
   }
 
   async getStreamInfo(asin, country = null) {
-    const manifests = await this.amazonMusicApi.getManifest(asin, country);
     const streamInfos = [];
+    const manifests = await this.amazonMusicApi.getManifest(asin, country);
 
     for (const manifestApi of manifests) {
       for (const contentResponse of manifestApi.contentResponseList) {
@@ -278,7 +280,6 @@ class Downloader {
         streamInfos.push(streamInfo);
       }
     }
-
     return streamInfos;
   }
 
@@ -519,17 +520,22 @@ class Downloader {
   }
 
   async getLyrics(asin, country) {
-    let lastLyric;
-    const lyricsApis = await this.amazonMusicApi.getLyrics(asin, country);
+    try {
+      let lastLyric;
+      const lyricsApis = await this.amazonMusicApi.getLyrics(asin, country);
 
-    for (const lyricsApi of lyricsApis) {
-      const lyrics = await this._getLyrics(lyricsApi);
-      for (const lyric of lyrics) {
-        lastLyric = lyric;
+      for (const lyricsApi of lyricsApis) {
+        const lyrics = await this._getLyrics(lyricsApi);
+        for (const lyric of lyrics) {
+          lastLyric = lyric;
+        }
       }
-    }
 
-    return lastLyric;
+      return lastLyric;
+    } catch (error) {
+      console.error("getLyrics error: " + error);
+      return null;
+    }
   }
 
   async _getLyrics(lyricsApi) {
@@ -558,7 +564,7 @@ class Downloader {
       (await this._getCoverUrlRaw(albumMetadata.asin, country)) ||
       albumMetadata.image;
     const coverUrlTemplate = this._getCoverUrlTemplate(coverUrlRaw);
-    console.log(coverUrlTemplate);
+    //console.log(coverUrlTemplate);
     return coverUrlTemplate
       .replace("{size}", this.coverSize)
       .replace("{quality}", this.coverQuality);
@@ -600,28 +606,38 @@ class Downloader {
       ? this.parseDate(metadataAlbum.originalReleaseDate / 1000)
       : null;
     return {
-      album: metadataAlbum.title,
+      album: metadataAlbum.title.replace(/"/g, "'"),
       artist: metadataTrack.artist.name,
       composer: metadataTrack.songWriters
-        ? this.getWriter(metadataTrack.songWriters)
+        ? this.getWriter(metadataTrack.songWriters).replace(/"/g, "'")
         : null,
-      copyright: metadataAlbum.productDetails.copyright,
+      copyright: metadataAlbum.productDetails.copyright
+        ? metadataAlbum.productDetails.copyright.replace(/"/g, "'")
+        : null,
       date: date ? date.toISOString().split("T")[0] : null,
       disc:
         parseInt(metadataTrack.discNum) +
         "/" +
         parseInt(metadataAlbum.tracks[metadataAlbum.tracks.length - 1].discNum),
-      genre: metadataTrack.genreName,
+      genre: metadataTrack.genreName
+        ? metadataTrack.genreName.replace(/"/g, "'")
+        : null,
       isrc: metadataTrack.isrc,
-      label: metadataAlbum.label,
-      lyrics: lyricsUnsynced,
+      label: metadataAlbum.label
+        ? metadataAlbum.label.replace(/"/g, "'")
+        : null,
+      lyrics: lyricsUnsynced
+        ? lyricsUnsynced
+            .replace(/\n/g, "/ ")
+            .replace(/"/g, "'")
+            .substring(0, 200)
+        : null,
       //media_type: 1,
       explicit: metadataTrack.parentalControls.hasExplicitLanguage
         ? "Explicit"
         : "Clean",
-      //const bpmRealTime = await bpm(sddff)
       //bpm: bpm, //Realtime BPM Analyzer
-      title: metadataTrack.title,
+      title: metadataTrack.title.replace(/"/g, "'"),
       tracknumber:
         parseInt(metadataTrack.trackNum) +
         "/" +
@@ -629,6 +645,65 @@ class Downloader {
           ...metadataAlbum.tracks
             .filter((track) => track.discNum === metadataTrack.discNum)
             .map((track) => parseInt(track.trackNum))
+        ),
+      url: `https://music.amazon.${urlSuffix}/albums/${metadataAlbum.asin}?trackAsin=${metadataTrack.asin}`,
+    };
+  }
+
+  getTagsPlaylist(
+    metadataTrack,
+    metadataAlbum,
+    lyricsUnsynced,
+    country,
+    metadataPlaylist
+  ) {
+    country = country || this.amazonMusicApi.appConfig.musicTerritory;
+    const urlSuffix = COUNTRIES[country].suffix || "com";
+    const date = metadataTrack.originalReleaseDate
+      ? this.parseDate(metadataTrack.originalReleaseDate / 1000)
+      : metadataAlbum.originalReleaseDate
+      ? this.parseDate(metadataAlbum.originalReleaseDate / 1000)
+      : null;
+    return {
+      album: metadataAlbum.title.replace(/"/g, "'"),
+      artist: metadataTrack.artist.name,
+      composer: metadataTrack.songWriters
+        ? this.getWriter(metadataTrack.songWriters).replace(/"/g, "'")
+        : null,
+      copyright: metadataAlbum.productDetails.copyright
+        ? metadataAlbum.productDetails.copyright.replace(/"/g, "'")
+        : null,
+      date: date ? date.toISOString().split("T")[0] : null,
+      disc:
+        parseInt(metadataTrack.discNum) +
+        "/" +
+        parseInt(metadataAlbum.tracks[metadataAlbum.tracks.length - 1].discNum),
+      genre: metadataTrack.genreName
+        ? metadataTrack.genreName.replace(/"/g, "'")
+        : null,
+      isrc: metadataTrack.isrc,
+      label: metadataAlbum.label
+        ? metadataAlbum.label.replace(/"/g, "'")
+        : null,
+      lyrics: lyricsUnsynced
+        ? lyricsUnsynced
+            .replace(/\n/g, "/ ")
+            .replace(/"/g, "'")
+            .substring(0, 200)
+        : null,
+      //media_type: 1,
+      explicit: metadataTrack.parentalControls.hasExplicitLanguage
+        ? "Explicit"
+        : "Clean",
+      //bpm: bpm, //Realtime BPM Analyzer
+      title: metadataTrack.title.replace(/"/g, "'"),
+      tracknumber:
+        parseInt(metadataTrack.itemIndex + 1) +
+        "/" +
+        Math.max(
+          ...metadataPlaylist.tracks.map((track) =>
+            parseInt(track.itemIndex + 1)
+          )
         ),
       url: `https://music.amazon.${urlSuffix}/albums/${metadataAlbum.asin}?trackAsin=${metadataTrack.asin}`,
     };
@@ -693,6 +768,36 @@ class Downloader {
     );
   }
 
+  addTrackToM3UPlaylist(m3uPlaylist, trackInfo, trackLocation, globalSettings) {
+    if (globalSettings.playlist.extended_m3u) {
+      fs.appendFileSync(
+        m3uPlaylist,
+        `#EXTINF:${trackInfo.duration || -1}, ${trackInfo.artists[0]} - ${
+          trackInfo.name
+        }\n`,
+        "utf-8"
+      );
+    }
+
+    if (globalSettings.playlist.paths_m3u === "absolute") {
+      fs.appendFileSync(
+        m3uPlaylist,
+        `${path.resolve(trackLocation)}\n`,
+        "utf-8"
+      );
+    } else {
+      fs.appendFileSync(
+        m3uPlaylist,
+        `${path.relative(path.dirname(m3uPlaylist), trackLocation)}\n`,
+        "utf-8"
+      );
+    }
+
+    if (globalSettings.playlist.extended_m3u) {
+      fs.appendFileSync(m3uPlaylist, "\n", "utf-8");
+    }
+  }
+
   getCoverPath(finalPath) {
     return path.join(finalPath, "..", "Cover.jpg");
   }
@@ -709,16 +814,88 @@ class Downloader {
     );
   }
 
-  async startDownloader(asin, country) {
+  async playlistDownloader(asin, country, progressCallback) {
     try {
       const metadata = await this.amazonMusicApi.getMetadata(asin, country);
-      if(!metadata.metadata.trackList){
+      if (!metadata.metadata.playlistList) {
         throw new Error("Invalid Amazon URL");
       }
-      console.log(metadata.metadata.trackList)
-      const getstreamInfo = await this.getStreamInfo(asin, country);
-      const streamInfo = getstreamInfo[0];
-      console.log(streamInfo)
+
+      const tracks = metadata.playlistList[0].tracks;
+      const playlistPath = path.join(
+        this.outputPath,
+        `${this.sanitizeFilename(metadata.playlistList[0].title)}`
+      );
+      if (!fs.existsSync(playlistPath)) {
+        fs.mkdirSync(playlistPath, { recursive: true });
+      }
+
+      progressCallback(
+        1,
+        `Downloading playlist ${this.sanitizeFilename(
+          metadata.playlistList[0].title
+        )}...`
+      );
+      const progress = 100 / tracks.length;
+      let countprogress = 0;
+
+      for (let i = 0; i < tracks.length; i++) {
+        countprogress = countprogress + progress;
+        progressCallback(
+          countprogress - 1,
+          `Downloading track ${this.sanitizeFilename(tracks[i].title)}...`
+        );
+
+        const getstreamInfo = await this.getStreamInfo(tracks[i].asin, country);
+        const metadataAlbum = await this.amazonMusicApi.getMetadata(
+          tracks[i].asin,
+          country
+        );
+        await this.startPlaylist(
+          tracks[i].asin,
+          country,
+          getstreamInfo[0],
+          playlistPath,
+          tracks[i],
+          metadataAlbum.albumList[0],
+          metadata.playlistList[0]
+        );
+      }
+
+      progressCallback(
+        100,
+        `Playlist download ${this.sanitizeFilename(
+          metadata.playlistList[0].title
+        )} completed.`
+      );
+      return;
+    } catch (error) {
+      console.error("PlaylistDownloader: " + error);
+      throw error;
+    }
+  }
+
+  async startPlaylist(
+    asin,
+    country,
+    streamInfo,
+    trackPath,
+    metadataTrack,
+    metadataAlbum,
+    metadataPlaylist
+  ) {
+    try {
+      const finalPath = path.join(
+        trackPath,
+        `${this.sanitizeFilename(
+          metadataTrack.artist.name
+        )} - ${this.sanitizeFilename(metadataTrack.title)}.flac`
+      );
+      if (fs.existsSync(finalPath)) {
+        console.log(`The file ${finalPath} already exists`);
+        return `The file ${finalPath} already exists`;
+      }
+
       const decryption_key = await this.getDecryptionKey(streamInfo, country);
       const encryptedPath = this.getEncryptedPath(asin);
       const decryptedPath = this.getDecryptedPath(asin);
@@ -726,23 +903,9 @@ class Downloader {
       const urlStream = streamInfo.streamUrl;
 
       const lyrics = await this.getLyrics(asin, country);
-      let lyricsUnsynced;
-      if (lyrics.unsynced) {
-        lyricsUnsynced = lyrics.unsynced.replace(/\n/g, "/ ").substring(0, 200);
-      }
-      const coverUrl = await this.getCoverUrl(metadata.albumList[0], country);
-      const tags = this.getTags(
-        metadata.trackList[0],
-        metadata.albumList[0],
-        lyricsUnsynced,
-        country
-      );
-      const finalPath = path.join(
-        this.outputPath,
-        `${this.sanitizeFilename(tags.artist)} - ${this.sanitizeFilename(
-          tags.title
-        )}.flac`
-      );
+      const coverUrl = metadataPlaylist.image;
+      console.log(trackPath, metadataPlaylist.title);
+      const coverPath = this.imagePath(trackPath, metadataPlaylist.title);
 
       await this.downloadFile(urlStream, encryptedPath);
       await this.remux(
@@ -752,19 +915,255 @@ class Downloader {
         remuxedPath,
         streamInfo
       );
+
+      // TAGS METADATA
+      const tags = this.getTagsPlaylist(
+        metadataTrack,
+        metadataAlbum,
+        lyrics.unsynced,
+        country,
+        metadataPlaylist
+      );
       await this.applyTags(
         remuxedPath,
         tags,
         coverUrl,
-        this.outputPath,
+        coverPath,
         streamInfo.codec
       );
+
       await this.moveToFinalPath(remuxedPath, finalPath);
+
+      if (this.lyricsDonwload && lyrics.synced)
+        await this.saveLrc(finalPath, lyrics.synced);
+
       await this.cleanupTempPath(encryptedPath);
       return tags;
     } catch (error) {
       console.error("Error starDownloader: ", error.message);
-      throw error
+      throw error;
+    }
+  }
+
+  imagePath(trackPath, name) {
+    const imageName = `${name.replace(/[^a-zA-Z0-9]/g, "_")}_cover.jpg`;
+    const finalPath = path.join(trackPath, imageName);
+    return finalPath;
+  }
+
+  async artistDownloader(asin, country, progressCallback) {
+    try {
+      const artist = await this.amazonMusicApi.getArtistReleases(asin, country);
+      const albums = artist[0].content.blocks[0].content.entities;
+      const artistName = albums[0].artists[0].name;
+
+      progressCallback(
+        1,
+        `Downloading Artist Albums ${this.sanitizeFilename(artistName)}...`
+      );
+
+      const progress = 100 / albums.length;
+      let countprogress = 0;
+
+      for (const album of albums) {
+        countprogress = countprogress + progress;
+
+        await this.albumDownloader(
+          album.asin,
+          country,
+          progressCallback,
+          countprogress - 1
+        );
+
+        progressCallback(
+          countprogress - 1,
+          `Downloading track ${this.sanitizeFilename(album.title)}...`
+        );
+      }
+
+      progressCallback(
+        100,
+        `${this.sanitizeFilename(artistName)} Artist Albums download completed`
+      );
+    } catch (error) {
+      console.error("Error artistDownloader: ", error.message);
+      throw error;
+    }
+  }
+
+  async albumDownloader(asin, country, progressCallback, isArtist = false) {
+    try {
+      const metadata = await this.amazonMusicApi.getMetadata(asin, country);
+      if (!metadata.metadata.albumList) {
+        throw new Error("Invalid Amazon URL");
+      }
+
+      const tracks = metadata.albumList[0].tracks;
+      const albumPath = path.join(
+        this.outputPath,
+        `${this.sanitizeFilename(metadata.albumList[0].artist.name)}`,
+        `${this.sanitizeFilename(metadata.albumList[0].title)}`
+      );
+      if (!fs.existsSync(albumPath)) {
+        fs.mkdirSync(albumPath, { recursive: true });
+      }
+      progressCallback(
+        isArtist ? isArtist : 1,
+        `Downloading album ${this.sanitizeFilename(
+          metadata.albumList[0].title
+        )}...`
+      );
+
+      const progress = 100 / tracks.length;
+      let countprogress = 0;
+
+      for (let i = 0; i < tracks.length; i++) {
+        countprogress = countprogress + progress;
+        progressCallback(
+          isArtist ? isArtist : countprogress - 1,
+          `Downloading track ${this.sanitizeFilename(tracks[i].title)}...`
+        );
+        const getstreamInfo = await this.getStreamInfo(tracks[i].asin, country);
+        await this.startDownloader(
+          tracks[i].asin,
+          country,
+          getstreamInfo[0],
+          albumPath,
+          tracks[i],
+          metadata.albumList[0]
+        );
+      }
+
+      if (!this.coverDownload) {
+        const coverPath = this.imagePath(
+          albumPath,
+          metadata.albumList[0].title
+        );
+        await this.cleanupTempPath(coverPath);
+      }
+
+      progressCallback(
+        isArtist ? isArtist : 100,
+        `Album download ${this.sanitizeFilename(
+          metadata.albumList[0].title
+        )} completed`
+      );
+      return "Album download completed successfully";
+    } catch (error) {
+      console.error("AlbumDownloader: " + error);
+      throw error;
+    }
+  }
+
+  async singleDownloader(asin, country, progressCallback) {
+    try {
+      const metadata = await this.amazonMusicApi.getMetadata(asin, country);
+      if (!metadata.metadata.trackList) {
+        throw new Error("Invalid Amazon URL");
+      }
+      const singlePath = path.join(
+        this.outputPath,
+        `${this.sanitizeFilename(metadata.albumList[0].artist.name)}`,
+        `${this.sanitizeFilename(metadata.trackList[0].title)}`
+      );
+      if (!fs.existsSync(singlePath)) {
+        fs.mkdirSync(singlePath, { recursive: true });
+      }
+
+      progressCallback(
+        1,
+        `Downloading ${metadata.trackList[0].artist.name} - ${metadata.trackList[0].title}.flac`
+      );
+      const getstreamInfo = await this.getStreamInfo(asin, country);
+      await this.startDownloader(
+        asin,
+        country,
+        getstreamInfo[0],
+        singlePath,
+        metadata.trackList[0],
+        metadata.albumList[0]
+      );
+      progressCallback(
+        100,
+        `Track ${metadata.trackList[0].artist.name} - ${metadata.trackList[0].title}.flac download complete`
+      );
+      if (!this.coverDownload) {
+        const coverPath = this.imagePath(
+          singlePath,
+          metadata.albumList[0].title
+        );
+        await this.cleanupTempPath(coverPath);
+      }
+      return;
+    } catch (error) {
+      console.error("SingleDownloader: " + error);
+      throw error;
+    }
+  }
+
+  async startDownloader(
+    asin,
+    country,
+    streamInfo,
+    trackPath,
+    metadataTrack,
+    metadataAlbum
+  ) {
+    try {
+      const finalPath = path.join(
+        trackPath,
+        `${this.sanitizeFilename(
+          metadataTrack.artist.name
+        )} - ${this.sanitizeFilename(metadataTrack.title)}.flac`
+      );
+      if (fs.existsSync(finalPath)) {
+        console.log(`The file ${finalPath} already exists`);
+        return `The file ${finalPath} already exists`;
+      }
+
+      const decryption_key = await this.getDecryptionKey(streamInfo, country);
+      const encryptedPath = this.getEncryptedPath(asin);
+      const decryptedPath = this.getDecryptedPath(asin);
+      const remuxedPath = this.getRemuxedPath(asin, streamInfo.codec);
+      const urlStream = streamInfo.streamUrl;
+
+      const lyrics = await this.getLyrics(asin, country);
+      const coverUrl = await this.getCoverUrl(metadataAlbum, country);
+      const coverPath = this.imagePath(trackPath, metadataAlbum.title);
+
+      await this.downloadFile(urlStream, encryptedPath);
+      await this.remux(
+        decryption_key,
+        encryptedPath,
+        decryptedPath,
+        remuxedPath,
+        streamInfo
+      );
+      //const bpm = await this.getBPM(remuxedPath);
+      const tags = this.getTags(
+        metadataTrack,
+        metadataAlbum,
+        lyrics.unsynced,
+        country
+      );
+      await this.applyTags(
+        remuxedPath,
+        tags,
+        coverUrl,
+        coverPath,
+        streamInfo.codec
+      );
+      await this.moveToFinalPath(remuxedPath, finalPath);
+
+      if (this.lyricsDonwload && lyrics.synced)
+        await this.saveLrc(finalPath, lyrics.synced);
+
+      await this.cleanupTempPath(encryptedPath);
+
+      return tags;
+    } catch (error) {
+      console.error("Error starDownloader: ", error.message);
+      throw error;
     }
   }
 
@@ -881,7 +1280,7 @@ class Downloader {
 
     try {
       execSync(commands.join(" "), { stdio: "inherit" });
-      console.log(`Archivo remuxed guardado en: ${remuxedPath}`);
+      //console.log(`Archivo remuxed guardado en: ${remuxedPath}`);
     } catch (error) {
       console.error(`Error ejecutando ffmpeg: ${error}`);
       throw error;
@@ -903,10 +1302,8 @@ class Downloader {
   }
 
   async applyTags(remuxedPath, tags, coverUrl, coverPath, codec) {
-    //const cover = await this.getResponseBytesCached(coverUrl);
     if (codec === Codec.FLAC_HD) {
       await tagFile(tags, coverUrl, coverPath, remuxedPath);
-      //await this.applyFlacTags(remuxedPath, tags, cover);
     } else {
       await this.applyMp4Tags(remuxedPath, tags, cover);
     }
@@ -987,11 +1384,12 @@ class Downloader {
   }
 
   async saveLrc(lrcPath, syncedLyrics) {
-    fs.writeFileSync(lrcPath, syncedLyrics, "utf8");
+    const lrcPathFinal = this.getLrcPath(lrcPath);
+    fs.writeFileSync(lrcPathFinal, syncedLyrics, "utf8");
   }
 
   async cleanupTempPath(removePath) {
-    await fs.unlink(removePath);
+    if (fs.existsSync(removePath)) await fs.unlink(removePath);
   }
 
   /*async getResponseBytesCached(url) {

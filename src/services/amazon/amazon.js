@@ -600,7 +600,7 @@ class AmazonMusicApi {
     return searchResults;
 }
 
-  async *getArtistReleases(artistAsin, country = null) {
+  /*async *getArtistReleases(artistAsin, country = null) {
     if (!this.session) await this._setSession();
 
     country = country || this.appConfig.musicTerritory;
@@ -619,7 +619,32 @@ class AmazonMusicApi {
         await new Promise((resolve) => setTimeout(resolve, this.WAIT_TIME));
       }
     } while (nextToken);
-  }
+  }*/
+
+    async getArtistReleases(artistAsin, country = null) {
+      if (!this.session) await this._setSession();
+    
+      country = country || this.appConfig.musicTerritory;
+      const continent = COUNTRIES[country].continent;
+      let nextToken = null;
+      const allReleases = [];
+    
+      do {
+        const artistReleases = await this._getArtistReleases(
+          artistAsin,
+          nextToken,
+          country,
+          continent
+        );
+        allReleases.push(artistReleases);
+        nextToken = artistReleases.content.blocks[0].content.nextToken;
+        if (nextToken) {
+          await new Promise((resolve) => setTimeout(resolve, this.WAIT_TIME));
+        }
+      } while (nextToken);
+    
+      return allReleases;
+    }
 
   async _getArtistReleases(artistAsin, nextToken, country, continent) {
     const response = await fetch(

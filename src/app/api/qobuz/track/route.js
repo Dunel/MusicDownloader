@@ -20,37 +20,29 @@ export async function GET(req) {
     return new Response(
       new ReadableStream({
         async start(controller) {
-          const updateProgress = (progress, message) => {
+          const progressStream = (progress, message) => {
             if (!controllerClosed) {
               controller.enqueue(`data: ${JSON.stringify({ progress, message })}\n\n`);
             }
           };
 
           try {
-            const downloadResult = await moduleInterface.getByUrl(trackId, updateProgress);
-            if (!controllerClosed) {
-              controller.enqueue(
-                `data: ${JSON.stringify({
-                  message: downloadResult,
-                  progress: 100,
-                })}\n\n`
-              );
-              controller.close();
-              controllerClosed = true;
-            }
+            progressStream(0, "Starting download...");
+            const trackInfo = await moduleInterface.getByUrl(trackId, progressStream);
+
+            // controller.enqueue(`data: ${JSON.stringify({ progress: 100, message: trackInfo })}\n\n`);
+            controller.close();
+            controllerClosed = true;
           } catch (error) {
-            console.error("Error downloading track or album:", error);
-            if (!controllerClosed) {
-              controller.enqueue(`data: ${JSON.stringify({ error: `Error downloading track or album: ${error.message}` })}\n\n`);
-              controller.close();
-              controllerClosed = true;
-            }
+            progressStream(100, `Error: ${error.message}`);
+            controllerClosed = true;
+            controller.enqueue(`data: ${JSON.stringify({ error: error.message })}\n\n`); 
+            controller.close();
           }
         },
-        cancel() {
-          console.log("Stream cancelled");
-          controllerClosed = true;
-        },
+        pull(controller) {},
+        cancel(reason) {
+        }
       }),
       {
         headers: {

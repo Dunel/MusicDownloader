@@ -625,7 +625,6 @@ class ModuleInterface {
   }
 
   async getUrlParts(url) {
-    try {
       const urlObj = new URL(url);
       if (
         urlObj.hostname == "www.qobuz.com" ||
@@ -662,13 +661,9 @@ class ModuleInterface {
         throw new Error("URL unrecognised");
       }
       return [urlParts[0], urlParts[1]];
-    } catch (error) {
-      console.log(error);
-    }
   }
 
   async getByUrl(url, progressCallback) {
-    try {
       const [type, id] = await this.getUrlParts(url);
       switch (type) {
         case "track":
@@ -680,10 +675,6 @@ class ModuleInterface {
         default:
           throw new Error("URL unrecognised");
       }
-    } catch (error) {
-      console.error(error);
-      throw error;
-    }
   }
 }
 

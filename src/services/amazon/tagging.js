@@ -73,63 +73,27 @@ async function tagFile(
   tags,
   coverurl,
   coverPath,
-  filePath /*, updateProgress*/
+  filePath
 ) {
   try {
     const coverUrl = coverurl;
     const fileDir = path.dirname(filePath);
     ensureDirectoryExistence(fileDir);
 
-    const imageName = `${tags.album.replace(/[^a-zA-Z0-9]/g, "_")}_cover.jpg`;
-    const imagePath = path.join(coverPath, imageName);
-
-    if (coverUrl && !fs.existsSync(imagePath)) {
-      //updateProgress(60, `Downloading cover image from: ${coverUrl}`);
-      await downloadImage(coverUrl, imagePath);
-      //updateProgress(70, `Cover image downloaded to: ${imagePath}`);
-    } else {
-      //console.log(`Cover image already exists at: ${imagePath}`);
-      //updateProgress(60, `Cover image already exists at: ${imagePath}`);
+    if (coverUrl && !fs.existsSync(coverPath)) {
+      await downloadImage(coverUrl, coverPath);
     }
-
-    /*let metadataTags = {
-      TITLE: trackInfo.title,
-      ALBUM: album.title,
-      ARTIST: trackInfo.artists.map(artist => artist.name).join(', '),
-      GENRE: trackInfo.genres?.join(', ') || '',
-      DATE: new Date(album.releaseDate).toISOString().split('T')[0],
-      TRACKNUMBER: `${trackInfo.trackNumber}/${album.trackCount}`,
-      DISCNUMBER: `${trackInfo.discNumber}/${album.discCount}`,
-      COMMENT: trackInfo.comment || '',
-      DESCRIPTION: trackInfo.description || '',
-      COPYRIGHT: trackInfo.copyright || '',
-      ISRC: trackInfo.isrc || '',
-      UPC: album.upc || '',
-      LABEL: trackInfo.label || '',
-      EXPLICIT: trackInfo.explicit ? 'Explicit' : 'Clean',
-      PRODUCER: trackInfo.producers?.join(', ') || '',
-      COMPOSER: trackInfo.composers?.join(', ') || '',
-      LYRICIST: trackInfo.lyricists?.join(', ') || ''
-    };*/
-    //console.log(metadataTags)
 
     let metadataTags = Object.fromEntries(
       Object.entries(tags).filter(([_, v]) => v != null)
     );
 
-    //updateProgress(80, `Adding metadata for ${metadata.title}`);.
-    console.log(metadataTags);
     await addMetadataToFlac(filePath, metadataTags);
-    //updateProgress(85, `Metadata added successfully for ${metadata.title}`);
 
-    if (coverUrl && fs.existsSync(imagePath)) {
-      //updateProgress(90, `Adding cover image for ${metadata.title}`);
-      await addCoverToFlac(filePath, imagePath);
-      //updateProgress(95, `Cover image added successfully for ${metadata.title}`);
+    if (coverUrl && fs.existsSync(coverPath)) {
+      await addCoverToFlac(filePath, coverPath);
     }
-    //updateProgress(99, `MD5 checksum set successfully for ${metadata.title}`);
   } catch (error) {
-    //updateProgress(100, `Error in tagFile: ${error.message}`);
     console.log(`Error in tagFile: ${error.message}`);
   }
 }
