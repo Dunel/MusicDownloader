@@ -11,10 +11,6 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className="bg-black">
-        <video autoPlay loop muted className="video-background">
-          <source src="Vibing-in-the-Rain-4K.mp4" type="video/mp4" />
-          Your browser does not support the video tag.
-        </video>
         <Navbar />
         <main>{children}</main>
         <Footer />

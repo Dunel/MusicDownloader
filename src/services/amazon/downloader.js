@@ -94,10 +94,11 @@ class Downloader {
 
   getUrlParts(url) {
     const urlParts = url
-      .match(
-        /^https?:\/\/music\.amazon\.com\/(artists|albums|tracks|playlists)\/(.*?)\/?(?:\?.*)?$/
-      )
-      ?.slice(1, 3);
+  .match(
+    /^https?:\/\/music\.amazon\.[a-z\.]+\/(artists|albums|tracks|playlists)\/(.*?)\/?(?:\?.*)?$/
+  )
+  ?.slice(1, 3);
+
 
     if (!urlParts)
       throw new Error(
@@ -270,17 +271,24 @@ class Downloader {
   }
 
   async getStreamInfo(asin, country = null) {
-    const streamInfos = [];
-    const manifests = await this.amazonMusicApi.getManifest(asin, country);
+    try {
+      const streamInfos = [];
+      const manifests = await this.amazonMusicApi.getManifest(asin, country);
 
-    for (const manifestApi of manifests) {
-      for (const contentResponse of manifestApi.contentResponseList) {
-        const manifest = contentResponse.manifest.replace(/xmlns="[^"]+"/, "");
-        const streamInfo = this._getStreamInfo(manifest);
-        streamInfos.push(streamInfo);
+      for (const manifestApi of manifests) {
+        for (const contentResponse of manifestApi.contentResponseList) {
+          const manifest = contentResponse.manifest.replace(
+            /xmlns="[^"]+"/,
+            ""
+          );
+          const streamInfo = this._getStreamInfo(manifest);
+          streamInfos.push(streamInfo);
+        }
       }
+      return streamInfos;
+    } catch (error) {
+      return null;
     }
-    return streamInfos;
   }
 
   _getStreamInfo(manifest) {
@@ -768,36 +776,6 @@ class Downloader {
     );
   }
 
-  addTrackToM3UPlaylist(m3uPlaylist, trackInfo, trackLocation, globalSettings) {
-    if (globalSettings.playlist.extended_m3u) {
-      fs.appendFileSync(
-        m3uPlaylist,
-        `#EXTINF:${trackInfo.duration || -1}, ${trackInfo.artists[0]} - ${
-          trackInfo.name
-        }\n`,
-        "utf-8"
-      );
-    }
-
-    if (globalSettings.playlist.paths_m3u === "absolute") {
-      fs.appendFileSync(
-        m3uPlaylist,
-        `${path.resolve(trackLocation)}\n`,
-        "utf-8"
-      );
-    } else {
-      fs.appendFileSync(
-        m3uPlaylist,
-        `${path.relative(path.dirname(m3uPlaylist), trackLocation)}\n`,
-        "utf-8"
-      );
-    }
-
-    if (globalSettings.playlist.extended_m3u) {
-      fs.appendFileSync(m3uPlaylist, "\n", "utf-8");
-    }
-  }
-
   getCoverPath(finalPath) {
     return path.join(finalPath, "..", "Cover.jpg");
   }
@@ -888,7 +866,7 @@ class Downloader {
       const finalPath = path.join(
         trackPath,
         `${this.sanitizeFilename(
-          metadataTrack.artist.name
+          metadataTrack.primaryArtistName
         )} - ${this.sanitizeFilename(metadataTrack.title)}.flac`
       );
       if (fs.existsSync(finalPath)) {
@@ -904,7 +882,6 @@ class Downloader {
 
       const lyrics = await this.getLyrics(asin, country);
       const coverUrl = metadataPlaylist.image;
-      console.log(trackPath, metadataPlaylist.title);
       const coverPath = this.imagePath(trackPath, metadataPlaylist.title);
 
       await this.downloadFile(urlStream, encryptedPath);
@@ -1001,7 +978,7 @@ class Downloader {
       const tracks = metadata.albumList[0].tracks;
       const albumPath = path.join(
         this.outputPath,
-        `${this.sanitizeFilename(metadata.albumList[0].artist.name)}`,
+        `${this.sanitizeFilename(metadata.albumList[0].primaryArtistName)}`,
         `${this.sanitizeFilename(metadata.albumList[0].title)}`
       );
       if (!fs.existsSync(albumPath)) {
@@ -1024,14 +1001,17 @@ class Downloader {
           `Downloading track ${this.sanitizeFilename(tracks[i].title)}...`
         );
         const getstreamInfo = await this.getStreamInfo(tracks[i].asin, country);
-        await this.startDownloader(
-          tracks[i].asin,
-          country,
-          getstreamInfo[0],
-          albumPath,
-          tracks[i],
-          metadata.albumList[0]
-        );
+
+        const down = getstreamInfo
+          ? await this.startDownloader(
+              tracks[i].asin,
+              country,
+              getstreamInfo[0],
+              albumPath,
+              tracks[i],
+              metadata.albumList[0]
+            )
+          : null;
       }
 
       if (!this.coverDownload) {
@@ -1051,7 +1031,7 @@ class Downloader {
       return "Album download completed successfully";
     } catch (error) {
       console.error("AlbumDownloader: " + error);
-      throw error;
+      //throw error;
     }
   }
 
@@ -1063,7 +1043,7 @@ class Downloader {
       }
       const singlePath = path.join(
         this.outputPath,
-        `${this.sanitizeFilename(metadata.albumList[0].artist.name)}`,
+        `${this.sanitizeFilename(metadata.albumList[0].primaryArtistName)}`,
         `${this.sanitizeFilename(metadata.trackList[0].title)}`
       );
       if (!fs.existsSync(singlePath)) {
@@ -1072,20 +1052,22 @@ class Downloader {
 
       progressCallback(
         1,
-        `Downloading ${metadata.trackList[0].artist.name} - ${metadata.trackList[0].title}.flac`
+        `Downloading ${metadata.trackList[0].primaryArtistName} - ${metadata.trackList[0].title}.flac`
       );
       const getstreamInfo = await this.getStreamInfo(asin, country);
-      await this.startDownloader(
-        asin,
-        country,
-        getstreamInfo[0],
-        singlePath,
-        metadata.trackList[0],
-        metadata.albumList[0]
-      );
+      const down = getstreamInfo
+        ? await this.startDownloader(
+            asin,
+            country,
+            getstreamInfo[0],
+            singlePath,
+            metadata.trackList[0],
+            metadata.albumList[0]
+          )
+        : null;
       progressCallback(
         100,
-        `Track ${metadata.trackList[0].artist.name} - ${metadata.trackList[0].title}.flac download complete`
+        `Track ${metadata.trackList[0].primaryArtistName} - ${metadata.trackList[0].title}.flac download complete`
       );
       if (!this.coverDownload) {
         const coverPath = this.imagePath(
@@ -1113,7 +1095,7 @@ class Downloader {
       const finalPath = path.join(
         trackPath,
         `${this.sanitizeFilename(
-          metadataTrack.artist.name
+          metadataTrack.primaryArtistName
         )} - ${this.sanitizeFilename(metadataTrack.title)}.flac`
       );
       if (fs.existsSync(finalPath)) {

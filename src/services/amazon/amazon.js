@@ -419,7 +419,7 @@ class AmazonMusicApi {
           }
           return manifest;
       } catch (error) {
-          console.error("Error in _getManifest:", error);
+          //console.error("Error in _getManifest:", error);
           throw error;
       }
   }

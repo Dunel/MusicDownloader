@@ -1,7 +1,6 @@
 import AmazonMusicApi from "@/services/amazon/amazon";
 import Downloader from "@/services/amazon/downloader";
 import { Codec } from "@/services/amazon/model";
-import path from "path";
 
 export async function GET(req) {
   try {
@@ -46,11 +45,12 @@ export async function GET(req) {
     const urlInfo = await downloader.getUrlInfo(url);
     //const data = await downloader.getByUrl(url, null);
     
-    const metadata = await amazonMusicApi.getMetadata(urlInfo.asin, urlInfo.country)
-    const artist = await downloader.artistDownloader(urlInfo.asin, urlInfo.country, null)
+    const metadata = await amazonMusicApi.getMetadata(urlInfo.asin, urlInfo.country);
+    //console.log(metadata.albumList[0].tracks.length)
+    //const artist = await downloader.artistDownloader(metadata)
     //const cover = await downloader.getCoverUrl(metadata)
 
-    return new Response(JSON.stringify(artist), {
+    return new Response(JSON.stringify(metadata), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (error) {

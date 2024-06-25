@@ -21,7 +21,9 @@ export default function Page() {
     setProgress(0);
     setMessage("Downloading...");
 
-    const eventSource = new EventSource(`/api/amazon?url=${url}&cover=${coverDownload}&lyric=${lyricDownload}`);
+    const eventSource = new EventSource(
+      `/api/amazon?url=${url}&cover=${coverDownload}&lyric=${lyricDownload}`
+    );
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -52,6 +54,12 @@ export default function Page() {
       <Header title={"Amazon Downloader"} />
       <ContainerWeb>
         <GridContainer>
+        <img 
+          src="./amazon.png"
+          alt="Amazon"
+          width={200}
+          height={200}
+          />
           <div className="w-full flex flex-col md:flex-row items-center gap-4">
             <input
               id="link_amazon"
@@ -65,7 +73,7 @@ export default function Page() {
             />
             <button
               onClick={download}
-              className={`flex-none rounded-md bg-indigo-500 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
+              className={`flex-none rounded-md bg-gray-900 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 ${
                 isDownloading ? "opacity-50 cursor-not-allowed" : ""
               }`}
               disabled={isDownloading}
@@ -114,13 +122,14 @@ export default function Page() {
                 Download lyrics?
               </label>
               <p className="text-gray-400">
-              download the lyrics of the songs in the same folder as the song files.
+                download the lyrics of the songs in the same folder as the song
+                files.
               </p>
             </div>
           </div>
-        </GridContainer>
         {progress > 0 && <p>Progress: {progress.toFixed(0)}%</p>}
         {message && <p>{message}</p>}
+        </GridContainer>
       </ContainerWeb>
     </>
   );

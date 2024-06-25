@@ -18,7 +18,7 @@ export default function Navbar() {
   ];
   const router = useRouter();
   return (
-    <Disclosure as="nav" className="bg-gray-800">
+    <Disclosure as="nav" className="bg-gray-800 bg-opacity-40 shadow-[0_0_5rem_rgba(53,43,77,1)]">
       {({ open }) => (
         <>
           <div className="mx-auto max-w-7xl px-2 sm:px-6 lg:px-8">
@@ -53,7 +53,7 @@ export default function Navbar() {
                         href={item.href}
                         className={classNames(
                           item.current
-                            ? "bg-gray-800 text-white"
+                            ? "bg-opacity-30 text-white"
                             : "text-gray-300 hover:bg-gray-700 hover:text-white",
                           "rounded-md px-3 py-2 text-sm font-medium"
                         )}
