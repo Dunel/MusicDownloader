@@ -6,6 +6,7 @@ import { useState } from "react";
 
 export default function Page() {
   const [url, setUrl] = useState("");
+  const [coverDownload, setCoverDownload] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
@@ -19,7 +20,7 @@ export default function Page() {
     setProgress(0); // Limpiar progreso
     setMessage(""); // Limpiar mensajes
 
-    const eventSource = new EventSource(`/api/qobuz/track?trackId=${url}`);
+    const eventSource = new EventSource(`/api/qobuz/track?trackId=${url}&cover=${coverDownload}`);
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -71,6 +72,29 @@ export default function Page() {
             >
               {isDownloading ? "Downloading..." : "Download"}
             </button>
+          </div>
+          <div className="flex mt-4">
+            <div className="flex h-6 items-center">
+              <input
+                id="comments"
+                name="comments"
+                type="checkbox"
+                onChange={(e) => {
+                  coverDownload
+                    ? setCoverDownload(false)
+                    : setCoverDownload(true);
+                }}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+              />
+            </div>
+            <div className="text-sm ml-4 leading-6">
+              <label htmlFor="comments" className="font-medium text-white">
+                Download covers?
+              </label>
+              <p className="text-gray-400">
+                download album covers in the same folder as the song files.
+              </p>
+            </div>
           </div>
             <div className="text-sm ml-4 leading-6">
             {progress > 0 && <p>Progress: {progress.toFixed(0)}%</p>}

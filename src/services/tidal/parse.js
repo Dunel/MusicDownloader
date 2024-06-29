@@ -87,7 +87,8 @@ export function parseTrack(raw) {
 		title: raw.title,
 		durationMs: raw.duration * 1000,
 		artists: raw.artists.map(parseArtist),
-		album: parseAlbum(raw.album)
+		album: parseAlbum(raw.album),
+		audioQuality: raw.audioQuality
 	};
 	if (raw.producers) track.producers = raw.producers;
 	if (raw.composers) track.composers = raw.composers;

@@ -1,4 +1,3 @@
-// utils/models.js
 class Tags {
     constructor(data = {}) {
         this.album_artist = data.album_artist || null;
@@ -105,7 +104,6 @@ const CodecEnum = Object.freeze({
     FLAC: 'flac',
     WAV: 'wav',
     AAC: 'aac',
-    // Añadir más códecs según sea necesario
 });
 
 const ContainerEnum = {

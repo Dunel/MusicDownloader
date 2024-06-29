@@ -1,6 +1,9 @@
+import { Montserrat } from "next/font/google";
 import Footer from "./components/footer";
 import Navbar from "./components/navbar";
 import "./globals.css";
+
+const montserrat = Montserrat({ subsets: ["latin"] });
 
 export const metadata = {
   title: "ORPHEE DOWNLOADER",
@@ -10,7 +13,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className="bg-black">
+      <body className={montserrat.className}>
         <Navbar />
         <main>{children}</main>
         <Footer />

@@ -1,14 +1,15 @@
-// services/moduleInterface.js
 import Qobuz from "./qobuz";
-import fs from "fs";
-import path from "path";
+import fs from "fs-extra";
+import path, { resolve } from "path";
 import axios from "axios";
 import { Tags, TrackInfo } from "../utils/models";
 import tagFile from "./tagging";
 
 class ModuleInterface {
-  constructor() {
+  constructor(config) {
     this.qobuz = new Qobuz();
+    this.covers = config.covers || false;
+    this.localpath = resolve("./downloads/qobuz");
   }
 
   async login() {
@@ -145,12 +146,12 @@ class ModuleInterface {
       if (!trackId) {
         throw new Error("trackId is required");
       }
-  
-      const downloadsPath = path.resolve(basePath, "downloads/qobuz");
+
+      const downloadsPath = basePath;
       if (!fs.existsSync(downloadsPath)) {
-        fs.mkdirSync(downloadsPath, { recursive: true }); // Ensure all directories are created
+        fs.mkdirSync(downloadsPath, { recursive: true });
       }
-  
+
       const tempPath = path.join(
         downloadsPath,
         `${this.sanitizeFilename(music_name)}.flac`
@@ -159,19 +160,19 @@ class ModuleInterface {
         console.log(`The file ${tempPath} already exists`);
         return tempPath;
       }
-  
+
       const trackData = await this.qobuz.getFileUrl(trackId);
       const trackUrl = trackData.url;
-  
+
       const response = await axios({
         method: "GET",
         url: trackUrl,
         responseType: "stream",
       });
-  
+
       const totalSize = parseInt(response.headers["content-length"], 10);
       let downloaded = 0;
-  
+
       response.data.on("data", (chunk) => {
         downloaded += chunk.length;
         const progress = (downloaded / totalSize) * 100;
@@ -179,15 +180,15 @@ class ModuleInterface {
           progressCallback(progress);
         }
       });
-  
+
       const writer = fs.createWriteStream(tempPath);
       response.data.pipe(writer);
-  
+
       await new Promise((resolve, reject) => {
         writer.on("finish", resolve);
         writer.on("error", reject);
       });
-  
+
       return tempPath;
     } catch (error) {
       if (error.code === "ECONNRESET" && retries > 0) {
@@ -204,11 +205,11 @@ class ModuleInterface {
       throw error;
     }
   }
-  
+
   async getTrackInfoDownload(
     trackId,
     progressCallback,
-    basePathCustom = process.cwd()
+    basePathCustom = this.localpath
   ) {
     try {
       const trackinfo = await this.getTrackInfoV2(trackId);
@@ -218,7 +219,7 @@ class ModuleInterface {
 
       const tempPath = path.join(
         basePath,
-        `downloads/qobuz/${this.sanitizeFilename(music_name)}.flac`
+        `${this.sanitizeFilename(music_name)}.flac`
       );
       if (fs.existsSync(tempPath)) {
         console.log(`The file ${tempPath} already exists`);
@@ -240,6 +241,7 @@ class ModuleInterface {
       }
 
       progressCallback(100, `Adding tags to ${music_name}`);
+      //const coverPath = this.imagePath(basePath, trackinfo.album)
       await tagFile(trackinfo, filePath);
 
       return `Download completed for ${music_name}`;
@@ -251,7 +253,7 @@ class ModuleInterface {
   async getTrackInfoDownloadV2(
     trackId,
     updateProgress,
-    basePathCustom = process.cwd(),
+    basePathCustom = this.localpath,
     isAlbumDownload = false
   ) {
     try {
@@ -259,35 +261,44 @@ class ModuleInterface {
       const basePath = basePathCustom;
       const music_name = `${trackinfo.name} - ${trackinfo.artists[0]}`;
       updateProgress(0, `Downloading: ${music_name}`);
-  
+
       const tempPath = path.join(
         basePath,
-        `downloads/qobuz/${this.sanitizeFilename(music_name)}.flac`
+        `${this.sanitizeFilename(music_name)}.flac`
       );
-  
+
       if (fs.existsSync(tempPath)) {
-        updateProgress(100, `The file ${music_name}.flac already exists`);
+        updateProgress(99, `The file ${music_name}.flac already exists`);
         return `The file ${music_name}.flac already exists`;
       }
-  
-      const filePath = await this.getTrackDownload(trackId, basePath, music_name);
-  
+
+      const filePath = await this.getTrackDownload(
+        trackId,
+        basePath,
+        music_name
+      );
+
       if (!fs.existsSync(filePath)) {
-        updateProgress(100, `The file ${music_name}.flac does not exist`);
+        updateProgress(99, `The file ${music_name}.flac does not exist`);
         return;
       }
-  
+
       updateProgress(50, `Adding metadata for ${music_name}`);
-      await tagFile(trackinfo, filePath, updateProgress);
-  
-      updateProgress(100, `Download completed for ${music_name}`);
+      const coverPath = this.imagePath(basePath, trackinfo.album);
+      await tagFile(trackinfo, filePath, coverPath, updateProgress);
+
+      if (!this.covers && !isAlbumDownload) {
+        await this.cleanupTempPath(coverPath);
+      }
+
+      updateProgress(99, `Download completed for ${music_name}`);
       return `Download completed for ${music_name}`;
     } catch (error) {
-      updateProgress(100, `Error: ${error.message}`);
+      updateProgress(99, `Error: ${error.message}`);
       throw error;
     }
   }
-  
+
   sanitizeFilename(name) {
     return name
       .replace(/[\\/:*?"<>|]/g, " ")
@@ -398,21 +409,15 @@ class ModuleInterface {
 
   async getAlbumInfoFile(data, basePath) {
     try {
-      // Select specific properties to include in the text file
       const { name, tracks } = data;
 
-      // Create an object without circular references
       const cleanData = { name, tracks };
 
-      // Convert the clean object to JSON
       const jsonData = JSON.stringify(cleanData, null, 2);
 
-      // Build the file path and write the JSON to the file
       const fileName = this.sanitizeFilename(name);
       const filePath = path.resolve(basePath, `${fileName}.txt`);
       fs.writeFileSync(filePath, jsonData, "utf8");
-
-      console.log("JSON file created successfully.");
     } catch (error) {
       console.error(error);
     }
@@ -482,30 +487,30 @@ class ModuleInterface {
       const totalTracks = trackArray.length;
       let completedTracks = 0;
       let progressMap = new Map();
-  
-      const sanitizedAlbumName = artist
-        ? `downloads/qobuz/${artist}/${this.sanitizeFilename(album_data.name)}`
-        : "downloads/qobuz/" + this.sanitizeFilename(album_data.name);
-      const downloadsPath = path.resolve(process.cwd(), sanitizedAlbumName);
-  
+
+      const sanitizedAlbumName = `${this.sanitizeFilename(
+        album_data.artist
+      )}/${this.sanitizeFilename(album_data.name)}`;
+      const downloadsPath = path.resolve(this.localpath, sanitizedAlbumName);
+
       if (!fs.existsSync(downloadsPath)) {
         fs.mkdirSync(downloadsPath, { recursive: true });
       }
-  
+
       await this.getAlbumInfoFile(album_data, downloadsPath);
-  
-      const concurrentDownloads = 3;
+
+      const concurrentDownloads = 5;
       const downloadQueue = [];
-  
+
       const updateProgress = (message) => {
         let totalProgress = 0;
         for (const progress of progressMap.values()) {
           totalProgress += progress;
         }
         const overallProgress = totalProgress / totalTracks;
-        progressCallback(overallProgress, message);
+        progressCallback(artist ? artist : overallProgress - 1, message);
       };
-  
+
       const startDownload = async (track, trackIndex) => {
         try {
           await this.getTrackInfoDownloadV2(
@@ -529,7 +534,7 @@ class ModuleInterface {
           }
         }
       };
-  
+
       for (let i = 0; i < trackArray.length; i++) {
         if (i < concurrentDownloads) {
           startDownload(trackArray[i], i);
@@ -537,7 +542,7 @@ class ModuleInterface {
           downloadQueue.push({ track: trackArray[i], index: i });
         }
       }
-  
+
       await new Promise((resolve) => {
         const interval = setInterval(() => {
           if (completedTracks === totalTracks) {
@@ -546,13 +551,25 @@ class ModuleInterface {
           }
         }, 100);
       });
-  
-      progressCallback(100, "Album download complete.");
+
+      if (!this.covers) {
+        await this.cleanupTempPath(
+          this.imagePath(downloadsPath, album_data.name)
+        );
+      }
+
+      progressCallback(artist ? artist : 100, "Album download complete.");
       return "Album download complete.";
     } catch (error) {
       console.error(error);
       throw error;
     }
+  }
+
+  imagePath(trackPath, name) {
+    const imageName = `${name.replace(/[^a-zA-Z0-9]/g, "_")}_cover.jpg`;
+    const finalPath = path.join(trackPath, imageName);
+    return finalPath;
   }
 
   async getArtistInfo(artist_id) {
@@ -565,116 +582,96 @@ class ModuleInterface {
     };
   }
 
-  async getArtistDownload(artist_id) {
+  async getArtistDownload(artist_id, progressCallback) {
     try {
       const artist_data = await this.getArtistInfo(artist_id);
+      console.log(artist_data.name)
       const albums = artist_data.albums;
-      const sanitizedArtistName = this.sanitizeFilename(artist_data.name);
-      const downloadsPath = path.resolve(
-        process.cwd(),
-        `downloads/${sanitizedArtistName}`
+      progressCallback(
+        1,
+        `Downloading albums by the artist ${this.sanitizeFilename(
+          artist_data.name
+        )}.`
       );
 
-      if (!fs.existsSync(downloadsPath)) {
-        fs.mkdirSync(downloadsPath, { recursive: true });
-      }
-
-      const concurrentDownloads = 1; // Queue size
-
-      const downloadQueue = [];
-      let currentDownloads = 0;
-
+      const progress = 100 / albums.length;
+      let countprogress = 0;
       for (const album of albums) {
-        const downloadPromise = await this.getAlbumDownload(
-          album,
-          sanitizedArtistName
+        countprogress = countprogress + progress;
+        progressCallback(
+          countprogress - 1,
+          `Downloading albums by the artist ${this.sanitizeFilename(artist_data.name)}...`
         );
-        downloadQueue.push(downloadPromise);
 
-        if (++currentDownloads >= concurrentDownloads) {
-          await Promise.race(downloadQueue);
-          downloadQueue.splice(0, currentDownloads);
-          currentDownloads = 0;
-        }
+        await this.getAlbumDownloadV2(
+          album,
+          progressCallback,
+          countprogress - 1
+        );
       }
-
-      // Wait for all remaining downloads to complete
-      await Promise.all(downloadQueue);
-
-      return "Artist albums download complete.";
+      progressCallback(
+        100,
+        `${this.sanitizeFilename(artist_data.name)} Albums download complete.`
+      );
+      return;
     } catch (error) {
       console.error(error);
     }
   }
 
-  async tet(id) {
-    const data = await this.getAlbumInfo(id);
-    this.getAlbumInfoFile(data, process.cwd());
-  }
-
-  async test(trackId) {
-    const trackinfo = await this.getTrackInfoV2(trackId);
-    const music_name = `${trackinfo.name} - ${trackinfo.artists[0]}`;
-    const filePath = await this.getTrackDownload(
-      trackId,
-      process.cwd(),
-      music_name,
-      this.showProgress
-    );
-    await tagFile(trackinfo, filePath);
+  async cleanupTempPath(removePath) {
+    if (fs.existsSync(removePath)) await fs.unlink(removePath);
   }
 
   async getUrlParts(url) {
-      const urlObj = new URL(url);
-      if (
-        urlObj.hostname == "www.qobuz.com" ||
-        urlObj.hostname == "qobuz.com"
-      ) {
-        const urlParts = url
-          .match(
-            /^https?:\/\/(?:www\.)?qobuz\.com\/[a-z]{2}-[a-z]{2}\/(.*?)\/.*?\/(.*?)$/
-          )
-          ?.slice(1, 3);
-        if (!urlParts) throw new Error("URL not supported");
-        urlParts[1] = urlParts[1].replace(/\?.*?$/, "");
-        const [type, id] = urlParts;
-        switch (type) {
-          case "interpreter":
-            return ["artist", id];
-          case "album":
-          case "track":
-            return [type, id];
-          default:
-            throw new Error("URL unrecognised");
-        }
-      }
+    const urlObj = new URL(url);
+    if (urlObj.hostname == "www.qobuz.com" || urlObj.hostname == "qobuz.com") {
       const urlParts = url
-        .match(/^https:\/\/(?:play|open)\.qobuz\.com\/(.*?)\/([^/]*?)\/?$/)
+        .match(
+          /^https?:\/\/(?:www\.)?qobuz\.com\/[a-z]{2}-[a-z]{2}\/(.*?)\/.*?\/(.*?)$/
+        )
         ?.slice(1, 3);
       if (!urlParts) throw new Error("URL not supported");
       urlParts[1] = urlParts[1].replace(/\?.*?$/, "");
-      if (
-        urlParts[0] != "artist" &&
-        urlParts[0] != "album" &&
-        urlParts[0] != "track"
-      ) {
-        throw new Error("URL unrecognised");
-      }
-      return [urlParts[0], urlParts[1]];
-  }
-
-  async getByUrl(url, progressCallback) {
-      const [type, id] = await this.getUrlParts(url);
+      const [type, id] = urlParts;
       switch (type) {
-        case "track":
-          return this.getTrackInfoDownloadV2(id, progressCallback);
+        case "interpreter":
+          return ["artist", id];
         case "album":
-          return this.getAlbumDownloadV2(id, progressCallback);
-        case "artist":
-          return this.getArtistDownload(id, progressCallback);
+        case "track":
+          return [type, id];
         default:
           throw new Error("URL unrecognised");
       }
+    }
+    const urlParts = url
+      .match(/^https:\/\/(?:play|open)\.qobuz\.com\/(.*?)\/([^/]*?)\/?$/)
+      ?.slice(1, 3);
+    if (!urlParts) throw new Error("URL not supported");
+    urlParts[1] = urlParts[1].replace(/\?.*?$/, "");
+    if (
+      urlParts[0] != "artist" &&
+      urlParts[0] != "album" &&
+      urlParts[0] != "track"
+    ) {
+      throw new Error("URL unrecognised");
+    }
+    return [urlParts[0], urlParts[1]];
+  }
+
+  async getByUrl(url, progressCallback) {
+    const [type, id] = await this.getUrlParts(url);
+    switch (type) {
+      case "track":
+        return this.getTrackInfoDownloadV2(id, progressCallback);
+      case "album":
+        return this.getAlbumDownloadV2(id, progressCallback);
+      case "artist":
+        await this.getArtistDownload(id, progressCallback);
+        return;
+      default:
+        throw new Error("URL unrecognised");
+    }
   }
 }
 

@@ -12,19 +12,38 @@ import {
   parseTrack,
 } from "./parse.js";
 import Stream from "stream";
-import fs from "fs";
-import path from "path";
+import fs from "fs-extra";
+import path, { resolve } from "path";
 import tagFile from "./tagging.js";
 
 class Tidal {
-  constructor(options) {
-    this.tvToken = options.tvToken;
-    this.tvSecret = options.tvSecret;
-    this.accessToken = options.accessToken;
-    this.refreshToken = options.refreshToken;
-    this.expires = parseInt(process.env.EXPIRES, 10);
+  constructor(config) {
+    const getFileTokens = () => {
+      try {
+        const data = fs.readFileSync(
+          resolve("./src/services/tidal/tokens.json"),
+          "utf8"
+        );
+        const jsonData = JSON.parse(data);
+        return jsonData;
+      } catch (error) {
+        console.error("Error al leer o parsear el archivo:", error);
+        throw error;
+      }
+    };
+
+    const tokens = getFileTokens();
+    this.tvToken = tokens.tvToken;
+    this.tvSecret = tokens.tvSecret;
+    this.accessToken = tokens.accessToken;
+    this.refreshToken = tokens.refreshToken;
+    this.expires = tokens.expires;
+    this.coversDownload = config.coversDownload || false;
+    this.lyricsDownload = config.lyricsDownload || false;
     this.hostnames = ["tidal.com", "www.tidal.com", "listen.tidal.com"];
     this.failedAuth = false;
+    this.tokensPath = resolve("./src/services/tidal/tokens.json");
+    this.localPath = resolve("./downloads/tidal/");
 
     this.tokensUpdated = false;
 
@@ -98,6 +117,39 @@ class Tidal {
     }
   }
 
+  async fileToken(newAccessToken, newRefreshToken, newExpires) {
+    fs.readFile(this.tokensPath, "utf8", (err, data) => {
+      if (err) {
+        console.error("Error al leer el archivo:", err);
+        return;
+      }
+
+      let jsonData;
+      try {
+        jsonData = JSON.parse(data);
+      } catch (parseErr) {
+        console.error("Error al parsear JSON:", parseErr);
+        return;
+      }
+
+      jsonData.accessToken = newAccessToken;
+      jsonData.refreshToken = newRefreshToken;
+      jsonData.expires = newExpires;
+
+      const newJsonData = JSON.stringify(jsonData, null, 2);
+
+      fs.writeFile(this.tokensPath, newJsonData, "utf8", (writeErr) => {
+        if (writeErr) {
+          console.error("Error al escribir el archivo:", writeErr);
+          return "Error actualizando tokens";
+        } else {
+          console.log("Archivo JSON actualizado correctamente.");
+          return "tokens actualizado correctamente";
+        }
+      });
+    });
+  }
+
   async getTokens() {
     try {
       const deviceAuthResponse = await axios.post(
@@ -141,6 +193,11 @@ class Tidal {
               console.log(
                 "[tidal] Using the following new config:",
                 this.getCurrentConfig()
+              );
+              this.fileToken(
+                loginData.access_token,
+                loginData.refresh_token,
+                Date.now() + loginData.expires_in * 1000
               );
               return loginData;
             }
@@ -261,6 +318,15 @@ class Tidal {
     };
   }
 
+  async getTestTrack(artistId) {
+    try {
+      const trackInfo = await this.#getTrack(346800957);
+      return trackInfo;
+    } catch (error) {
+      return error.message;
+    }
+  }
+
   async #getFileUrl(trackId, quality = "LOSSLESS") {
     try {
       const playbackInfoResponse = await this.#get(
@@ -342,6 +408,15 @@ class Tidal {
     }
   }
 
+  async #getLyric(track_id) {
+    try {
+      const dataLyric = await this.#get(`tracks/${track_id}/lyrics`);
+      return dataLyric.subtitles;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async downloadTrack(trackInfo, basePath) {
     try {
       //console.log(trackInfo)
@@ -355,14 +430,21 @@ class Tidal {
         return tempPath;
       }
 
-      const { stream } = await this.#getFileUrl(trackInfo.id);
+      if (!fs.existsSync(basePath)) {
+        fs.mkdirSync(basePath, { recursive: true });
+      }
+
+      const { stream } = await this.#getFileUrl(trackInfo.id, trackInfo.audioQuality);
       const writeStream = fs.createWriteStream(tempPath);
 
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve, reject) => {4504807
         stream.pipe(writeStream);
         stream.on("end", async () => {
           try {
             await tagFile(trackInfo, tempPath);
+            if (this.lyricsDownload) {
+              await this.saveLrc(tempPath, trackInfo.id);
+            }
             resolve(tempPath);
           } catch (tagError) {
             reject(tagError);
@@ -375,6 +457,18 @@ class Tidal {
     }
   }
 
+  getLrcPath(finalPath) {
+    return finalPath.replace(/\.\w+$/, ".lrc");
+  }
+
+  async saveLrc(lrcPath, trackId) {
+    const lyricData = await this.#getLyric(trackId);
+    if (!lyricData) return;
+
+    const lrcPathFinal = this.getLrcPath(lrcPath);
+    fs.writeFileSync(lrcPathFinal, lyricData, "utf8");
+  }
+
   async getAlbumDownloadV2(albumInfo, progressCallback, artist = false) {
     try {
       const album_data = albumInfo.albumdata;
@@ -384,10 +478,10 @@ class Tidal {
       let completedTracks = 0;
       let progressMap = new Map();
 
-      const sanitizedAlbumName = artist
-        ? `downloads/tidal/${artist}/${this.sanitizeFilename(album_data.title)}`
-        : "downloads/tidal/" + this.sanitizeFilename(album_data.title);
-      const downloadsPath = path.resolve(process.cwd(), sanitizedAlbumName);
+      const sanitizedAlbumName = `${
+        album_data.artists[0].name
+      }/${this.sanitizeFilename(album_data.title)}`;
+      const downloadsPath = path.resolve(this.localPath, sanitizedAlbumName);
 
       if (!fs.existsSync(downloadsPath)) {
         fs.mkdirSync(downloadsPath, { recursive: true });
@@ -404,7 +498,7 @@ class Tidal {
           totalProgress += progress;
         }
         const overallProgress = totalProgress / totalTracks;
-        progressCallback(overallProgress - 1, message);
+        progressCallback(artist ? artist : overallProgress - 1, message);
       };
 
       const startDownload = async (track, trackIndex) => {
@@ -449,8 +543,13 @@ class Tidal {
         }, 100);
       });
 
+      if (!this.coversDownload) {
+        const coverpath = this.imagePath(downloadsPath, album_data.title);
+        await this.cleanupTempPath(coverpath);
+      }
+
       progressCallback(
-        100,
+        artist ? artist : 100,
         `${this.sanitizeFilename(album_data.title)} Album download complete.`
       );
       return "Album download complete.";
@@ -460,14 +559,75 @@ class Tidal {
     }
   }
 
+  imagePath(trackPath, name) {
+    const imageName = `${name.replace(/[^a-zA-Z0-9]/g, "_")}_cover.jpg`;
+    //console.log(name);
+    const finalPath = path.join(trackPath, imageName);
+    return finalPath;
+  }
+
+  async cleanupTempPath(removePath) {
+    if (fs.existsSync(removePath)) {
+      console.log("Removing temporary");
+      await fs.unlink(removePath);
+    }
+  }
+
+  async getArtistAlbums(artisId, progressCallback) {
+    try {
+      const artist = await this.#getArtist(artisId);
+      progressCallback(
+        1,
+        `Downloading albums by the artist ${this.sanitizeFilename(
+          artist.name
+        )}.`
+      );
+
+      const progress = 100 / artist.albums.length;
+      let countprogress = 0;
+      for (const album of artist.albums) {
+        countprogress = countprogress + progress;
+        progressCallback(
+          countprogress - 1,
+          `Downloading album ${this.sanitizeFilename(album.title)}...`
+        );
+
+        const tracks = await this.#getAlbumTracks(album.id);
+        const albumdata = await this.#getAlbum(album.id);
+        await this.getAlbumDownloadV2(
+          { tracks, albumdata },
+          progressCallback,
+          countprogress - 1
+        );
+      }
+      progressCallback(
+        100,
+        `${this.sanitizeFilename(artist.name)} Albums download complete.`
+      );
+      return;
+    } catch (error) {
+      return error;
+    }
+  }
+
   async getSingleTrack(id, progressCallback) {
     const trackdata = await this.#getTrack(id);
-    const basePath = path.resolve(process.cwd(), "downloads/tidal/");
+    const basePath = resolve(
+      this.localPath,
+      `${this.sanitizeFilename(
+        trackdata.artists[0].name
+      )}/${this.sanitizeFilename(trackdata.title)}`
+    );
     progressCallback(
       1,
       `Downloading ${trackdata.title} - ${trackdata.artists[0].name}.flac`
     );
     await this.downloadTrack(trackdata, basePath);
+
+    if (!this.coversDownload) {
+      const coverpath = this.imagePath(basePath, trackdata.album.title);
+      await this.cleanupTempPath(coverpath);
+    }
     progressCallback(
       100,
       `Track ${trackdata.title} - ${trackdata.artists[0].name}.flac download complete`
@@ -481,14 +641,17 @@ class Tidal {
         /^https?:\/\/(?:www\.|listen\.)?tidal\.com\/(?:browse\/)?(.*?)\/(.*?)\/?$/
       )
       ?.slice(1, 3);
-    if (!urlParts) throw new Error("URL not supported. Please enter a valid Tidal URL.");
+    if (!urlParts)
+      throw new Error("URL not supported. Please enter a valid Tidal URL.");
     urlParts[1] = urlParts[1].replace(/\?.*?$/, "");
     if (
       urlParts[0] !== "artist" &&
       urlParts[0] !== "album" &&
       urlParts[0] !== "track"
     ) {
-      throw new Error("URL unrecognized. Please enter a URL for an artist, album, or track.");
+      throw new Error(
+        "URL unrecognized. Please enter a URL for an artist, album, or track."
+      );
     }
     return [urlParts[0], urlParts[1]];
   }
@@ -507,10 +670,7 @@ class Tidal {
         const albumdata = await this.#getAlbum(id);
         return this.getAlbumDownloadV2({ tracks, albumdata }, progressCallback);
       case "artist":
-        return {
-          type,
-          metadata: await this.#getArtist(id),
-        };
+        return await this.getArtistAlbums(id, progressCallback);
       default:
         throw new Error("Invalid URL type");
     }

@@ -10,7 +10,7 @@ function classNames(...classes) {
 
 export default function Navbar() {
   const navigation = [
-    { name: "PRINCIPAL", href: "/", current: true },
+    { name: "MAIN", href: "/", current: true },
     { name: "QOBUZ", href: "/qobuz", current: true },
     { name: "TIDAL", href: "/tidal", current: true },
     { name: "AMAZON", href: "/amazon", current: true },
@@ -40,7 +40,7 @@ export default function Navbar() {
                   <Link href={"/"}>
                   <img
                     className="h-16 w-auto"
-                    src="./orphee.png"
+                    src="./logo.png"
                     alt="Orphee"
                   />
                   </Link>

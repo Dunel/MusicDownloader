@@ -954,7 +954,7 @@ class Downloader {
 
         progressCallback(
           countprogress - 1,
-          `Downloading track ${this.sanitizeFilename(album.title)}...`
+          `Downloading album ${this.sanitizeFilename(album.title)}...`
         );
       }
 
@@ -1043,7 +1043,7 @@ class Downloader {
       }
       const singlePath = path.join(
         this.outputPath,
-        `${this.sanitizeFilename(metadata.albumList[0].primaryArtistName)}`,
+        `${this.sanitizeFilename(metadata.trackList[0].primaryArtistName)}`,
         `${this.sanitizeFilename(metadata.trackList[0].title)}`
       );
       if (!fs.existsSync(singlePath)) {

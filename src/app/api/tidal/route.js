@@ -4,6 +4,8 @@ export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const tidalUrl = searchParams.get("url");
+    const coversDownload = searchParams.get("covers")
+    const lyricsDownload = searchParams.get("lyrics")
 
     if (!tidalUrl) {
       return new Response(JSON.stringify({ error: "URL is required" }), {
@@ -11,12 +13,12 @@ export async function GET(req) {
       });
     }
 
-    const tidal = new Tidal({
-      tvToken: process.env.TV_TOKEN,
-      tvSecret: process.env.TV_SECRET,
-      accessToken: process.env.ACCESS_TOKEN,
-      refreshToken: process.env.REFRESH_TOKEN,
-    });
+    const config = {
+      coversDownload: coversDownload == "true" ? true : false,
+      lyricsDownload: lyricsDownload == "true" ? true : false
+    }
+
+    const tidal = new Tidal(config);
 
     let controllerClosed = false;
 
