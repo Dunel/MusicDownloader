@@ -1,10 +1,11 @@
-// services/tagging.js
 import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import util from "util";
+import { Image } from "image-js";
 
-async function addMetadataToFlac(filePath, metadata) {
+/*async function addMetadataToFlac(filePath, metadata) {
   return new Promise((resolve, reject) => {
     const commands = Object.entries(metadata).map(([key, value]) => {
       return `metaflac --set-tag="${key}=${value.replace(
@@ -25,9 +26,39 @@ async function addMetadataToFlac(filePath, metadata) {
       }
     });
   });
+}*/
+
+async function addMetadataToFlac(filePath, metadata) {
+  try {
+    const execPromise = util.promisify(exec);
+    const inputFilePath = path.resolve(filePath);
+    const tempFilePath = inputFilePath + ".temp.flac";
+
+    const metadataString = Object.entries(metadata)
+      .map(
+        ([key, value]) =>
+          `-metadata ${key.toUpperCase()}="${value.replace(/"/g, '\\"')}"`
+      )
+      .join(" ");
+
+    const command = `ffmpeg -i "${inputFilePath}" ${metadataString} -codec copy "${tempFilePath}"`;
+
+    const { stdout, stderr } = await execPromise(command);
+
+    if (stderr) {
+      //console.error(`ffmpeg stderr: ${stderr}`);
+    }
+
+    fs.renameSync(tempFilePath, inputFilePath);
+
+    //console.log(`Title tag replaced successfully: ${stdout}`);
+  } catch (error) {
+    console.error(`Error adding metadata: ${error.message}`);
+    throw error;
+  }
 }
 
-async function addCoverToFlac(filePath, coverImagePath) {
+/*async function addCoverToFlac(filePath, coverImagePath) {
   return new Promise((resolve, reject) => {
     const command = `metaflac --import-picture-from="${coverImagePath}" "${filePath}"`;
 
@@ -37,6 +68,26 @@ async function addCoverToFlac(filePath, coverImagePath) {
         reject(error);
       } else {
         console.log("Cover image added successfully!");
+        resolve(stdout);
+      }
+    });
+  });
+}*/
+
+async function addCoverToFlac(filePath, coverImagePath) {
+  return new Promise((resolve, reject) => {
+    const inputFilePath = path.resolve(filePath);
+    const tempFilePath = inputFilePath + ".temp.flac";
+
+    const command = `ffmpeg -i "${inputFilePath}" -i "${coverImagePath}" -map 0:a -map 1 -codec copy -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (front)" -disposition:v attached_pic -q:v 1 "${tempFilePath}"`;
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`Error adding cover image: ${stderr}`);
+        reject(new Error(`Error adding cover image: ${stderr}`));
+      } else {
+        console.log("Cover image added successfully!");
+        fs.renameSync(tempFilePath, inputFilePath);
         resolve(stdout);
       }
     });
@@ -80,6 +131,18 @@ async function downloadImage(url, filepath) {
   });
 }
 
+async function convertToPNG(inputPath, outputPath) {
+  try {
+    const imageIn = await Image.load(inputPath);
+
+    let imageOut = imageIn
+      .resize({ width: 1000, height: 1000 })
+      return imageOut.save(outputPath, { format: "png" });
+  } catch (error) {
+    console.error(`Error converting image: ${error.message}`);
+  }
+}
+
 function ensureDirectoryExistence(filePath) {
   const dirname = path.dirname(filePath);
   if (fs.existsSync(dirname)) {
@@ -89,19 +152,18 @@ function ensureDirectoryExistence(filePath) {
   fs.mkdirSync(dirname, { recursive: true });
 }
 
-async function tagFile(trackInfo, filePath, imagePath, updateProgress) {
+async function tagFile(trackInfo, filePath, imagePath) {
   try {
     const { tags, cover_url: coverUrl } = trackInfo;
     const fileDir = path.dirname(filePath);
     ensureDirectoryExistence(fileDir);
 
     if (coverUrl && !fs.existsSync(imagePath)) {
-      updateProgress(60, `Downloading cover image from: ${coverUrl}`);
       await downloadImage(coverUrl, imagePath);
-      updateProgress(70, `Cover image downloaded to: ${imagePath}`);
-    } else {
-      updateProgress(60, `Cover image already exists at: ${imagePath}`);
     }
+
+    const pngFilePath = imagePath.replace(/\.[^/.]+$/, ".png");
+    await convertToPNG(imagePath, pngFilePath);
 
     let metadata = {
       TITLE: trackInfo.name,
@@ -129,25 +191,15 @@ async function tagFile(trackInfo, filePath, imagePath, updateProgress) {
     metadata = Object.fromEntries(
       Object.entries(metadata).filter(([_, v]) => v != null)
     );
-
-    updateProgress(80, `Adding metadata for ${trackInfo.name}`);
     await addMetadataToFlac(filePath, metadata);
-    updateProgress(85, `Metadata added successfully for ${trackInfo.name}`);
 
-    if (coverUrl && fs.existsSync(imagePath)) {
-      updateProgress(90, `Adding cover image for ${trackInfo.name}`);
-      await addCoverToFlac(filePath, imagePath);
-      updateProgress(
-        95,
-        `Cover image added successfully for ${trackInfo.name}`
-      );
+    if (coverUrl && fs.existsSync(pngFilePath)) {
+      await addCoverToFlac(filePath, pngFilePath);
     }
+    fs.unlinkSync(pngFilePath);
 
-    updateProgress(97, `Setting MD5 checksum for ${trackInfo.name}`);
     await setMd5Checksum(filePath);
-    updateProgress(99, `MD5 checksum set successfully for ${trackInfo.name}`);
   } catch (error) {
-    updateProgress(100, `Error in tagFile: ${error.message}`);
     console.log(`Error in tagFile: ${error.message}`);
   }
 }

@@ -10,6 +10,7 @@ class ModuleInterface {
     this.qobuz = new Qobuz();
     this.covers = config.covers || false;
     this.localpath = resolve("./downloads/qobuz");
+    this.localTempPath = resolve("./downloads/qobuz/temp");
   }
 
   async login() {
@@ -260,7 +261,10 @@ class ModuleInterface {
       const trackinfo = await this.getTrackInfoV2(trackId);
       const basePath = basePathCustom;
       const music_name = `${trackinfo.name} - ${trackinfo.artists[0]}`;
-      updateProgress(0, `Downloading: ${music_name}`);
+      updateProgress(
+        isAlbumDownload ? isAlbumDownload : 0,
+        `Downloading: ${music_name}`
+      );
 
       const tempPath = path.join(
         basePath,
@@ -268,7 +272,10 @@ class ModuleInterface {
       );
 
       if (fs.existsSync(tempPath)) {
-        updateProgress(99, `The file ${music_name}.flac already exists`);
+        updateProgress(
+          isAlbumDownload ? isAlbumDownload : 99,
+          `The file ${music_name}.flac already exists`
+        );
         return `The file ${music_name}.flac already exists`;
       }
 
@@ -279,22 +286,34 @@ class ModuleInterface {
       );
 
       if (!fs.existsSync(filePath)) {
-        updateProgress(99, `The file ${music_name}.flac does not exist`);
+        updateProgress(
+          isAlbumDownload ? isAlbumDownload : 99,
+          `The file ${music_name}.flac does not exist`
+        );
         return;
       }
 
-      updateProgress(50, `Adding metadata for ${music_name}`);
+      updateProgress(
+        isAlbumDownload ? isAlbumDownload : 50,
+        `Adding metadata for ${music_name}`
+      );
       const coverPath = this.imagePath(basePath, trackinfo.album);
-      await tagFile(trackinfo, filePath, coverPath, updateProgress);
+      await tagFile(trackinfo, filePath, coverPath);
 
       if (!this.covers && !isAlbumDownload) {
         await this.cleanupTempPath(coverPath);
       }
 
-      updateProgress(99, `Download completed for ${music_name}`);
+      updateProgress(
+        isAlbumDownload ? isAlbumDownload : 99,
+        `Download completed for ${music_name}`
+      );
       return `Download completed for ${music_name}`;
     } catch (error) {
-      updateProgress(99, `Error: ${error.message}`);
+      updateProgress(
+        isAlbumDownload ? isAlbumDownload : 99,
+        `Error: ${error.message}`
+      );
       throw error;
     }
   }
@@ -427,10 +446,10 @@ class ModuleInterface {
     try {
       const album_data = await this.getAlbumInfo(album_id);
       const trackArray = album_data.tracks;
-      const sanitizedAlbumName = artist
-        ? `downloads/${artist}/${this.sanitizeFilename(album_data.name)}`
-        : "downloads/" + this.sanitizeFilename(album_data.name);
-      const downloadsPath = path.resolve(process.cwd(), sanitizedAlbumName);
+      const sanitizedAlbumName = `${this.sanitizeFilename(
+        album_data.artist
+      )}/${this.sanitizeFilename(album_data.name)}`;
+      const downloadsPath = path.resolve(this.localpath, sanitizedAlbumName);
 
       if (!fs.existsSync(downloadsPath)) {
         fs.mkdirSync(downloadsPath, { recursive: true });
@@ -438,40 +457,27 @@ class ModuleInterface {
 
       await this.getAlbumInfoFile(album_data, downloadsPath);
 
-      const concurrentDownloads = 2; // cola
-
-      const downloadQueue = [];
-      let currentDownloads = 0;
-
-      const startDownload = async (track) => {
-        try {
-          await this.getTrackInfoDownload(
-            track,
-            progressCallback,
-            downloadsPath
-          );
-        } finally {
-          currentDownloads--;
-          if (downloadQueue.length > 0) {
-            const nextTrack = downloadQueue.shift();
-            currentDownloads++;
-            startDownload(nextTrack);
-          }
-        }
-      };
-
+      const progress = 100 / trackArray.length;
+      let countprogress = 0;
       for (const track of trackArray) {
-        if (currentDownloads < concurrentDownloads) {
-          currentDownloads++;
-          startDownload(track);
-        } else {
-          downloadQueue.push(track);
-        }
+        countprogress = countprogress + progress;
+        await this.getTrackInfoDownloadV2(
+          track,
+          progressCallback,
+          downloadsPath,
+          artist ? artist : countprogress - 1
+        );
+      }
+      if (!this.covers) {
+        await this.cleanupTempPath(
+          this.imagePath(downloadsPath, album_data.name)
+        );
       }
 
-      while (currentDownloads > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      progressCallback(
+        artist ? artist : 100,
+        `Album download ${this.sanitizeFilename(album_data.name)} completed`
+      );
 
       return "Album download complete.";
     } catch (error) {
@@ -585,7 +591,7 @@ class ModuleInterface {
   async getArtistDownload(artist_id, progressCallback) {
     try {
       const artist_data = await this.getArtistInfo(artist_id);
-      console.log(artist_data.name)
+      console.log(artist_data.name);
       const albums = artist_data.albums;
       progressCallback(
         1,
@@ -600,14 +606,12 @@ class ModuleInterface {
         countprogress = countprogress + progress;
         progressCallback(
           countprogress - 1,
-          `Downloading albums by the artist ${this.sanitizeFilename(artist_data.name)}...`
+          `Downloading albums by the artist ${this.sanitizeFilename(
+            artist_data.name
+          )}...`
         );
 
-        await this.getAlbumDownloadV2(
-          album,
-          progressCallback,
-          countprogress - 1
-        );
+        await this.getAlbumDownload(album, progressCallback, countprogress - 1);
       }
       progressCallback(
         100,
@@ -665,7 +669,7 @@ class ModuleInterface {
       case "track":
         return this.getTrackInfoDownloadV2(id, progressCallback);
       case "album":
-        return this.getAlbumDownloadV2(id, progressCallback);
+        return this.getAlbumDownload(id, progressCallback);
       case "artist":
         await this.getArtistDownload(id, progressCallback);
         return;
