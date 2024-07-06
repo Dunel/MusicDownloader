@@ -94,11 +94,10 @@ class Downloader {
 
   getUrlParts(url) {
     const urlParts = url
-  .match(
-    /^https?:\/\/music\.amazon\.[a-z\.]+\/(artists|albums|tracks|playlists)\/(.*?)\/?(?:\?.*)?$/
-  )
-  ?.slice(1, 3);
-
+      .match(
+        /^https?:\/\/music\.amazon\.[a-z\.]+\/(artists|albums|tracks|playlists)\/(.*?)\/?(?:\?.*)?$/
+      )
+      ?.slice(1, 3);
 
     if (!urlParts)
       throw new Error(
@@ -993,6 +992,7 @@ class Downloader {
 
       const progress = 100 / tracks.length;
       let countprogress = 0;
+      const media_count = tracks[tracks.length - 1].discNum;
 
       for (let i = 0; i < tracks.length; i++) {
         countprogress = countprogress + progress;
@@ -1007,7 +1007,9 @@ class Downloader {
               tracks[i].asin,
               country,
               getstreamInfo[0],
-              albumPath,
+              media_count > 1
+                ? await this.getPathMediaCount(albumPath, tracks[i].discNum)
+                : albumPath,
               tracks[i],
               metadata.albumList[0]
             )
@@ -1033,6 +1035,14 @@ class Downloader {
       console.error("AlbumDownloader: " + error);
       //throw error;
     }
+  }
+
+  async getPathMediaCount(basePath, mediacount) {
+    const downloadsPath = path.resolve(basePath, `CD${mediacount}`);
+    if (!fs.existsSync(downloadsPath)) {
+      fs.mkdirSync(downloadsPath, { recursive: true });
+    }
+    return downloadsPath;
   }
 
   async singleDownloader(asin, country, progressCallback) {

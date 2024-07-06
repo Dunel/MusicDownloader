@@ -8,7 +8,8 @@ import tagFile from "./tagging";
 class ModuleInterface {
   constructor(config) {
     this.qobuz = new Qobuz();
-    this.covers = config.covers || false;
+    this.login();
+    this.covers = config ? config.covers : false;
     this.localpath = resolve("./downloads/qobuz");
     this.localTempPath = resolve("./downloads/qobuz/temp");
   }
@@ -391,8 +392,8 @@ class ModuleInterface {
       let extra_kwargs = {};
       album_data.tracks.items.forEach((track) => {
         const track_id = String(track.id);
-        tracks.push(track_id);
-        track.album = album_data;
+        tracks.push({ id: track_id, media_count: track.media_number });
+        //track.album = album_data;
         extra_kwargs[track_id] = track;
       });
 
@@ -405,6 +406,7 @@ class ModuleInterface {
         name: album_name,
         artist: album_data.artist.name,
         artist_id: album_data.artist.id,
+        media_count: album_data.media_count,
         tracks,
         release_year: parseInt(album_data.release_date_original.split("-")[0]),
         explicit: album_data.parental_warning,
@@ -428,9 +430,9 @@ class ModuleInterface {
 
   async getAlbumInfoFile(data, basePath) {
     try {
-      const { name, tracks } = data;
+      const { name, track_extra_kwargs } = data;
 
-      const cleanData = { name, tracks };
+      const cleanData = { name, track_extra_kwargs };
 
       const jsonData = JSON.stringify(cleanData, null, 2);
 
@@ -462,9 +464,11 @@ class ModuleInterface {
       for (const track of trackArray) {
         countprogress = countprogress + progress;
         await this.getTrackInfoDownloadV2(
-          track,
+          track.id,
           progressCallback,
-          downloadsPath,
+          album_data.media_count > 1 ? 
+          await this.getPathMediaCount(downloadsPath, track.media_count) 
+          : downloadsPath,
           artist ? artist : countprogress - 1
         );
       }
@@ -486,7 +490,15 @@ class ModuleInterface {
     }
   }
 
-  async getAlbumDownloadV2(album_id, progressCallback, artist = false) {
+  async getPathMediaCount(basePath, mediacount){
+    const downloadsPath = path.resolve(basePath, `CD${mediacount}`);
+    if (!fs.existsSync(downloadsPath)) {
+      fs.mkdirSync(downloadsPath, { recursive: true });
+    }
+    return downloadsPath;
+  }
+
+  /*async getAlbumDownloadV2(album_id, progressCallback, artist = false) {
     try {
       const album_data = await this.getAlbumInfo(album_id);
       const trackArray = album_data.tracks;
@@ -570,7 +582,7 @@ class ModuleInterface {
       console.error(error);
       throw error;
     }
-  }
+  }*/
 
   imagePath(trackPath, name) {
     const imageName = `${name.replace(/[^a-zA-Z0-9]/g, "_")}_cover.jpg`;

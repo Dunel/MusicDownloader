@@ -17,7 +17,7 @@ export async function GET(req) {
     };
 
     const moduleInterface = new ModuleInterface(config);
-    await moduleInterface.login();
+    //await moduleInterface.login();
 
     let controllerClosed = false;
 

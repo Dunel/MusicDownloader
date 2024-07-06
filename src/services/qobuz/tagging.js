@@ -5,29 +5,6 @@ import axios from "axios";
 import util from "util";
 import { Image } from "image-js";
 
-/*async function addMetadataToFlac(filePath, metadata) {
-  return new Promise((resolve, reject) => {
-    const commands = Object.entries(metadata).map(([key, value]) => {
-      return `metaflac --set-tag="${key}=${value.replace(
-        /"/g,
-        ""
-      )}" "${filePath}"`;
-    });
-
-    const command = commands.join(" && ");
-
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error adding metadata: ${stderr}`);
-        reject(error);
-      } else {
-        console.log("Metadata added successfully!");
-        resolve(stdout);
-      }
-    });
-  });
-}*/
-
 async function addMetadataToFlac(filePath, metadata) {
   try {
     const execPromise = util.promisify(exec);
@@ -51,95 +28,87 @@ async function addMetadataToFlac(filePath, metadata) {
 
     fs.renameSync(tempFilePath, inputFilePath);
 
-    //console.log(`Title tag replaced successfully: ${stdout}`);
   } catch (error) {
     console.error(`Error adding metadata: ${error.message}`);
-    throw error;
   }
 }
 
-/*async function addCoverToFlac(filePath, coverImagePath) {
-  return new Promise((resolve, reject) => {
-    const command = `metaflac --import-picture-from="${coverImagePath}" "${filePath}"`;
-
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error adding cover image: ${stderr}`);
-        reject(error);
-      } else {
-        console.log("Cover image added successfully!");
-        resolve(stdout);
-      }
-    });
-  });
-}*/
-
 async function addCoverToFlac(filePath, coverImagePath) {
-  return new Promise((resolve, reject) => {
+  try {
     const inputFilePath = path.resolve(filePath);
     const tempFilePath = inputFilePath + ".temp.flac";
 
     const command = `ffmpeg -i "${inputFilePath}" -i "${coverImagePath}" -map 0:a -map 1 -codec copy -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (front)" -disposition:v attached_pic -q:v 1 "${tempFilePath}"`;
 
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error adding cover image: ${stderr}`);
-        reject(new Error(`Error adding cover image: ${stderr}`));
-      } else {
-        console.log("Cover image added successfully!");
-        fs.renameSync(tempFilePath, inputFilePath);
-        resolve(stdout);
-      }
+    await new Promise((resolve, reject) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          //console.error(`Error adding cover image: ${stderr}`);
+          reject(new Error(`Error adding cover image: ${stderr}`));
+        } else {
+          //console.log("Cover image added successfully!");
+          fs.renameSync(tempFilePath, inputFilePath);
+          resolve();
+        }
+      });
     });
-  });
+  } catch (error) {
+    console.error(`Error adding cover: ${error.message}`);
+  }
 }
 
 async function setMd5Checksum(filePath) {
-  return new Promise((resolve, reject) => {
-    const command = `flac -f8 "${filePath}"`;
+  try {
+    await new Promise((resolve, reject) => {
+      const command = `flac -f8 "${filePath}"`;
 
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error setting MD5 checksum: ${stderr}`);
-        reject(error);
-      } else {
-        console.log("MD5 checksum set successfully!");
-        resolve(stdout);
-      }
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          //console.error(`Error setting MD5 checksum: ${stderr}`);
+          reject(error);
+        } else {
+          //console.log("MD5 checksum set successfully!");
+          resolve();
+        }
+      });
     });
-  });
+  } catch (error) {
+    //console.error(`Error setting MD5 checksum: ${error.message}`);
+  }
 }
 
 async function downloadImage(url, filepath) {
-  if (fs.existsSync(filepath)) {
-    console.log(`Cover image already exists at: ${filepath}`);
-    return;
+  try {
+    if (fs.existsSync(filepath)) {
+      console.log(`Cover image already exists at: ${filepath}`);
+      return;
+    }
+
+    const writer = fs.createWriteStream(filepath);
+    const response = await axios({
+      url,
+      method: "GET",
+      responseType: "stream",
+    });
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+  } catch (error) {
+    //console.error(`Error downloading image: ${error.message}`);
   }
-
-  const writer = fs.createWriteStream(filepath);
-  const response = await axios({
-    url,
-    method: "GET",
-    responseType: "stream",
-  });
-
-  response.data.pipe(writer);
-
-  return new Promise((resolve, reject) => {
-    writer.on("finish", resolve);
-    writer.on("error", reject);
-  });
 }
 
 async function convertToPNG(inputPath, outputPath) {
   try {
     const imageIn = await Image.load(inputPath);
-
-    let imageOut = imageIn
-      .resize({ width: 1000, height: 1000 })
-      return imageOut.save(outputPath, { format: "png" });
+    let imageOut = imageIn.resize({ width: 1000, height: 1000 });
+    await imageOut.save(outputPath, { format: "png" });
   } catch (error) {
-    console.error(`Error converting image: ${error.message}`);
+    //console.error(`Error converting image: ${error.message}`);
   }
 }
 

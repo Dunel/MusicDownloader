@@ -194,7 +194,6 @@ class AmazonMusicApi {
 
     const metadata = await response.json();
 
-    // Imprime el contenido de la respuesta para depuración
     //console.log("Metadata response:", metadata);
 
     if (
